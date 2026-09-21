@@ -1,10 +1,12 @@
 from collections import deque
 
+from src.services.rate_limiter.interface import RateLimiterInterface
+
 MAX_REQUESTS = 10
 WINDOW_SECONDS = 60
 
 
-class RateLimiter:
+class InMemoryRateLimiter(RateLimiterInterface):
     """Single-user, in-memory rate limiter. Multi-user tracking is a separate ticket."""
 
     def __init__(self, max_requests: int = MAX_REQUESTS, window_seconds: int = WINDOW_SECONDS) -> None:
