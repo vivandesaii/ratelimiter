@@ -1,15 +1,19 @@
-from src.rate_limiter import RateLimiter
+from src.services.rate_limiter import InMemoryRateLimiter, RateLimiterInterface
+
+
+def test_implements_interface() -> None:
+    assert isinstance(InMemoryRateLimiter(), RateLimiterInterface)
 
 
 def test_request_under_limit() -> None:
-    limiter = RateLimiter(max_requests=10, window_seconds=60)
+    limiter = InMemoryRateLimiter(max_requests=10, window_seconds=60)
 
     for i in range(10):
         assert limiter.allow_request(timestamp=float(i)) is True
 
 
 def test_request_over_limit() -> None:
-    limiter = RateLimiter(max_requests=10, window_seconds=60)
+    limiter = InMemoryRateLimiter(max_requests=10, window_seconds=60)
 
     for i in range(10):
         assert limiter.allow_request(timestamp=float(i)) is True
@@ -18,7 +22,7 @@ def test_request_over_limit() -> None:
 
 
 def test_request_allowed_after_oldest_expires() -> None:
-    limiter = RateLimiter(max_requests=10, window_seconds=60)
+    limiter = InMemoryRateLimiter(max_requests=10, window_seconds=60)
 
     for i in range(10):
         assert limiter.allow_request(timestamp=float(i)) is True
@@ -27,8 +31,9 @@ def test_request_allowed_after_oldest_expires() -> None:
     # exactly 60s old and should be evicted before the count is checked.
     assert limiter.allow_request(timestamp=60.0) is True
 
+
 def test_rejected_request_leaves_no_phantom_entry() -> None:
-    limiter = RateLimiter(max_requests=10, window_seconds=60)
+    limiter = InMemoryRateLimiter(max_requests=10, window_seconds=60)
 
     for i in range(10):
         assert limiter.allow_request(timestamp=float(i)) is True
