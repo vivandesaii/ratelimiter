@@ -2,6 +2,7 @@ import uuid
 
 import redis
 
+from src.services.rate_limiter.in_memory import InMemoryRateLimiter
 from src.services.rate_limiter.interface import RateLimiterInterface
 
 MAX_REQUESTS = 10
@@ -36,6 +37,14 @@ class RedisRateLimiter(RateLimiterInterface):
 
     The expire-check-add sequence runs as a single Lua script via EVAL, so it is
     atomic with respect to other clients hitting the same key.
+
+    If Redis is unreachable, behavior depends on `fail_open`:
+    - fail_open=False: the request is denied (returns False).
+    - fail_open=True: falls back to a per-instance InMemoryRateLimiter. Known
+      limitation: this fallback is not shared across instances, so during a
+      Redis outage a multi-instance deployment enforces the limit independently
+      per instance (effectively up to N times the configured limit, where N is
+      the instance count). Accepted trade-off: degraded protection beats none.
     """
 
     def __init__(
@@ -44,18 +53,30 @@ class RedisRateLimiter(RateLimiterInterface):
         key: str = DEFAULT_KEY,
         max_requests: int = MAX_REQUESTS,
         window_seconds: int = WINDOW_SECONDS,
+        fail_open: bool = True,
     ) -> None:
         self.client = client
         self.key = key
         self.max_requests = max_requests
         self.window_seconds = window_seconds
+        self.fail_open = fail_open
         self._allow_request_script = client.register_script(_ALLOW_REQUEST_SCRIPT)
+        self._fallback: InMemoryRateLimiter | None = None
 
     def allow_request(self, timestamp: float) -> bool:
         # Member must be unique: identical timestamps would otherwise collapse into one entry.
         member = f"{timestamp}:{uuid.uuid4().hex}"
-        result = self._allow_request_script(
-            keys=[self.key],
-            args=[timestamp, self.window_seconds, self.max_requests, member],
-        )
+        try:
+            result = self._allow_request_script(
+                keys=[self.key],
+                args=[timestamp, self.window_seconds, self.max_requests, member],
+            )
+        except (redis.ConnectionError, redis.TimeoutError):
+            if not self.fail_open:
+                return False
+            if self._fallback is None:
+                self._fallback = InMemoryRateLimiter(
+                    max_requests=self.max_requests, window_seconds=self.window_seconds
+                )
+            return self._fallback.allow_request(timestamp)
         return bool(result)
