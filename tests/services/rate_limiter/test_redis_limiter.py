@@ -2,6 +2,7 @@ import os
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
 
 import pytest
 import redis
@@ -64,3 +65,25 @@ def test_concurrent_requests_never_exceed_limit(limiter: RedisRateLimiter) -> No
 
     assert limiter.client.zcard(limiter.key) == limiter.max_requests
     assert sorted(results) == [False, True]
+
+
+def test_fail_open_falls_back_to_in_memory_limiter(limiter: RedisRateLimiter) -> None:
+    limiter.fail_open = True
+    limiter._allow_request_script = Mock(side_effect=redis.ConnectionError)
+
+    for i in range(10):
+        assert limiter.allow_request(timestamp=float(i)) is True
+
+    # 11th request exceeds the fallback's own limit.
+    assert limiter.allow_request(timestamp=10.0) is False
+
+    # Falling back never touched Redis, so the real key stays empty.
+    assert limiter.client.zcard(limiter.key) == 0
+
+
+def test_fail_closed_denies_request(limiter: RedisRateLimiter) -> None:
+    limiter.fail_open = False
+    limiter._allow_request_script = Mock(side_effect=redis.ConnectionError)
+
+    assert limiter.allow_request(timestamp=0.0) is False
+    assert limiter.client.zcard(limiter.key) == 0
